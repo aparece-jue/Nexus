@@ -1,0 +1,10 @@
+body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: #202936; background: #f5f7fa; }
+main { max-width: 1200px; margin: auto; padding: 24px; }
+.panels { display: flex; gap: 20px; margin-top: 20px; }
+section { flex: 1; min-width: 0; padding: 16px; background: white; border: 1px solid #cbd5e1; border-radius: 8px; overflow-wrap: anywhere; }
+.cm-editor { min-height: 400px; }
+button { padding: 8px 16px; }
+button:focus-visible { outline: 3px solid #2868cf; }
+table { border-collapse: collapse; } td, th { border: 1px solid #aab5c4; padding: 6px 12px; }
+pre { overflow: auto; background: #f1f4f8; padding: 12px; }
+@media (max-width: 700px) { .panels { flex-direction: column; } }
