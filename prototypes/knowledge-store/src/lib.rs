@@ -16,16 +16,48 @@ fn hash(bytes: &[u8]) -> String {
 
 impl Store {
     pub fn open(root: PathBuf) -> Result<Self> {
+        fs::create_dir_all(&root)?;
+        let mut db = Connection::open(root.join("knowledge.db"))?;
+        db.execute_batch("PRAGMA foreign_keys=ON;")?;
+        let schema: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if schema > 1 {
+            return Err("workspace schema is newer than this application; refusing writes".into());
+        }
         fs::create_dir_all(root.join("blobs"))?;
-        let db = Connection::open(root.join("knowledge.db"))?;
-        db.execute_batch(
-            "PRAGMA foreign_keys=ON;
+        if schema == 0 {
+            let tables: i64 = db.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+                [], |row| row.get(0),
+            )?;
+            if tables != 0 {
+                for (table, expected) in [
+                    ("item", vec!["id", "revision"]),
+                    (
+                        "version",
+                        vec!["item_id", "revision", "body_hash", "attachment_hash"],
+                    ),
+                ] {
+                    let mut statement = db.prepare(&format!("PRAGMA table_info({table})"))?;
+                    let columns = statement
+                        .query_map([], |row| row.get::<_, String>(1))?
+                        .collect::<std::result::Result<Vec<_>, _>>()?;
+                    if tables != 2 || columns != expected {
+                        return Err("unrecognized unversioned workspace; refusing migration".into());
+                    }
+                }
+            }
+            let tx = db.transaction()?;
+            tx.execute_batch(
+                "
              CREATE TABLE IF NOT EXISTS item(id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS version(
                item_id TEXT NOT NULL REFERENCES item(id), revision INTEGER NOT NULL,
                body_hash TEXT NOT NULL, attachment_hash TEXT,
-               PRIMARY KEY(item_id,revision));",
-        )?;
+               PRIMARY KEY(item_id,revision));
+             PRAGMA user_version=1;",
+            )?;
+            tx.commit()?;
+        }
         Ok(Self { root, db })
     }
 
@@ -83,6 +115,19 @@ impl Store {
             .query_row("SELECT revision FROM item WHERE id=?1", [id], |row| {
                 row.get(0)
             })?)
+    }
+
+    /// Seed a synthetic workspace without treating corruption as a missing note.
+    pub fn ensure_note(&mut self, id: &str, body: &[u8]) -> Result<()> {
+        match self.current_revision(id) {
+            Ok(_) => Ok(()),
+            Err(error) => match error.downcast_ref::<rusqlite::Error>() {
+                Some(rusqlite::Error::QueryReturnedNoRows) => {
+                    self.save(id, 0, body, None).map(|_| ())
+                }
+                _ => Err(error),
+            },
+        }
     }
 
     pub fn read(&self, id: &str, revision: i64) -> Result<Vec<u8>> {
@@ -250,6 +295,40 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(fallback, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn newer_workspace_is_refused_without_changing_its_schema_or_content() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = Connection::open(dir.path().join("knowledge.db"))?;
+        db.execute_batch("PRAGMA user_version=99; CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES ('keep');")?;
+        assert!(Store::open(dir.path().to_owned()).is_err());
+        let version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        assert_eq!(version, 99);
+        let value: String = db.query_row("SELECT value FROM future_data", [], |row| row.get(0))?;
+        assert_eq!(value, "keep");
+        let tables: i64 = db.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name='item'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(tables, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn unrelated_unversioned_database_is_not_adopted_as_a_workspace() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = Connection::open(dir.path().join("knowledge.db"))?;
+        db.execute_batch(
+            "CREATE TABLE unrelated(value TEXT); INSERT INTO unrelated VALUES ('keep');",
+        )?;
+        assert!(Store::open(dir.path().to_owned()).is_err());
+        let version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        assert_eq!(version, 0);
+        let value: String = db.query_row("SELECT value FROM unrelated", [], |row| row.get(0))?;
+        assert_eq!(value, "keep");
         Ok(())
     }
 }

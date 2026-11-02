@@ -38,7 +38,7 @@ function App() {
   }
   return <main>
     <h1>Nexus Markdown 编辑验证</h1>
-    <p>{isTauri() ? '桌面临时工作区：仅用于合成资料验证，退出后清理。' : '浏览器组件模式：不保存资料。'}</p>
+    <p>{isTauri() ? '独立验证工作区：退出后保留，未加密。请勿存入真实工作资料。' : '浏览器组件模式：不保存资料。'}</p>
     <button aria-pressed={preview} onClick={() => setPreview(!preview)}>渲染预览</button>{' '}
     <button disabled={!isTauri() || !state.dirty || state.saving} onClick={() => void save()}>保存新版本</button>{' '}
     <button disabled={state.dirty || state.saving} onClick={() => void load()}>重新读取</button>
