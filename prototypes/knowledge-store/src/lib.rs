@@ -155,4 +155,75 @@ mod tests {
         assert!(store.read("note", 1).is_err());
         Ok(())
     }
+
+    #[test]
+    fn failed_version_insert_rolls_back_revision_and_preserves_old_content() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        store.save("note", 0, b"stable", None)?;
+        store.db.execute_batch(
+            "CREATE TRIGGER reject_version BEFORE INSERT ON version
+             BEGIN SELECT RAISE(ABORT, 'injected insert failure'); END;",
+        )?;
+        assert!(store.save("note", 1, b"uncommitted", None).is_err());
+        let revision: i64 =
+            store
+                .db
+                .query_row("SELECT revision FROM item WHERE id='note'", [], |row| {
+                    row.get(0)
+                })?;
+        assert_eq!(revision, 1);
+        assert_eq!(store.read("note", 1)?, b"stable");
+        assert!(store.read("note", 2).is_err());
+        store.db.execute_batch("DROP TRIGGER reject_version")?;
+        assert_eq!(store.save("note", 1, b"retry", None)?, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_blob_write_does_not_create_database_reference() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        let digest = hash(b"blocked");
+        // A directory at the pending-file path deterministically refuses file creation.
+        fs::create_dir(dir.path().join("blobs").join(format!("{digest}.pending")))?;
+        assert!(store.save("new-note", 0, b"blocked", None).is_err());
+        let count: i64 = store
+            .db
+            .query_row("SELECT count(*) FROM item", [], |row| row.get(0))?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn bundled_fts5_trigram_matches_chinese_and_component_models() -> Result<()> {
+        let db = Connection::open_in_memory()?;
+        db.execute_batch("CREATE VIRTUAL TABLE search USING fts5(body, tokenize='trigram');")?;
+        db.execute(
+            "INSERT INTO search(body) VALUES (?1)",
+            ["双冗余电源 使用 AD5422 进行评估"],
+        )?;
+        for query in ["冗余电源", "AD5422"] {
+            let count: i64 = db.query_row(
+                "SELECT count(*) FROM search WHERE search MATCH ?1",
+                [query],
+                |row| row.get(0),
+            )?;
+            assert_eq!(count, 1, "missing query: {query}");
+        }
+        let short_count: i64 = db.query_row(
+            "SELECT count(*) FROM search WHERE search MATCH ?1",
+            ["电源"],
+            |row| row.get(0),
+        )?;
+        // Trigram MATCH does not cover short Chinese terms; production needs a fallback.
+        assert_eq!(short_count, 0);
+        let fallback: i64 = db.query_row(
+            "SELECT count(*) FROM search WHERE instr(body, ?1)>0",
+            ["电源"],
+            |row| row.get(0),
+        )?;
+        assert_eq!(fallback, 1);
+        Ok(())
+    }
 }
