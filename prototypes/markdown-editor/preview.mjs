@@ -25,7 +25,11 @@ function render() {
 body.addEventListener('input', () => { editor.edit(body.value); render(); });
 save.addEventListener('click', async () => { const pending = editor.save(); render(); await pending; render(); });
 async function load() {
-  try { await editor.load('preview-note', editor.snapshot().revision || 1); render(); }
+  try {
+    const latest = await request({ operation: 'read', id: 'preview-note', revision: 0 });
+    await editor.load('preview-note', latest.revision);
+    render();
+  }
   catch (error) { status.textContent = error.message; }
 }
 reload.addEventListener('click', load);

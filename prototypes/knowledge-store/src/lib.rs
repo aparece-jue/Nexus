@@ -77,6 +77,14 @@ impl Store {
         Ok(expected + 1)
     }
 
+    pub fn current_revision(&self, id: &str) -> Result<i64> {
+        Ok(self
+            .db
+            .query_row("SELECT revision FROM item WHERE id=?1", [id], |row| {
+                row.get(0)
+            })?)
+    }
+
     pub fn read(&self, id: &str, revision: i64) -> Result<Vec<u8>> {
         let (body, attachment): (String, Option<String>) = self.db.query_row(
             "SELECT body_hash,attachment_hash FROM version WHERE item_id=?1 AND revision=?2",

@@ -17,7 +17,14 @@ fn run() -> Result<Value, Box<dyn Error>> {
     }
     let mut store = Store::open(PathBuf::from(root))?;
     match request["operation"].as_str() {
-        Some("read") => Ok(json!({"text": String::from_utf8(store.read(id, revision)?)?})),
+        Some("read") => {
+            let revision = if revision == 0 {
+                store.current_revision(id)?
+            } else {
+                revision
+            };
+            Ok(json!({"revision": revision, "text": String::from_utf8(store.read(id, revision)?)?}))
+        }
         Some("save") => {
             let text = request["text"].as_str().ok_or("missing text")?;
             Ok(json!({"revision": store.save(id, revision, text.as_bytes(), None)?}))

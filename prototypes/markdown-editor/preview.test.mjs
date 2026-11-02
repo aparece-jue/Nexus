@@ -13,5 +13,7 @@ test('local preview serves UI and real storage; cross-origin write rejected', as
     assert.equal((await saved.json()).value.revision, 2);
     const read = await fetch(`${app.origin}/store`, { method: 'POST', headers, body: JSON.stringify({ operation: 'read', id: 'preview-note', revision: 2 }) });
     assert.equal((await read.json()).value.text, '# 测试');
+    const latest = await fetch(`${app.origin}/store`, { method: 'POST', headers, body: JSON.stringify({ operation: 'read', id: 'preview-note', revision: 0 }) });
+    assert.deepEqual((await latest.json()).value, { revision: 2, text: '# 测试' });
   } finally { await app.close(); }
 });
