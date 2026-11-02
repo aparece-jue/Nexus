@@ -1,0 +1,2 @@
+# Isolated source snapshots, dependency caches and build outputs for local validation.
+.local-validation/
