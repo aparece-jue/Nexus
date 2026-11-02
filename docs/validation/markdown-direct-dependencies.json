@@ -1,0 +1,55 @@
+{
+  "scope": "direct frontend dependencies only; not a full license audit",
+  "packages": [
+    {
+      "name": "@codemirror/commands",
+      "version": "6.11.1",
+      "license": "MIT"
+    },
+    {
+      "name": "@codemirror/lang-markdown",
+      "version": "6.5.2",
+      "license": "MIT"
+    },
+    {
+      "name": "@codemirror/state",
+      "version": "6.7.6",
+      "license": "MIT"
+    },
+    {
+      "name": "@codemirror/view",
+      "version": "6.43.15",
+      "license": "MIT"
+    },
+    {
+      "name": "@tauri-apps/api",
+      "version": "2.12.0",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "react",
+      "version": "19.3.0",
+      "license": "MIT"
+    },
+    {
+      "name": "react-dom",
+      "version": "19.3.0",
+      "license": "MIT"
+    },
+    {
+      "name": "react-markdown",
+      "version": "10.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "rehype-sanitize",
+      "version": "6.0.0",
+      "license": "MIT"
+    },
+    {
+      "name": "remark-gfm",
+      "version": "4.0.1",
+      "license": "MIT"
+    }
+  ]
+}
