@@ -86,6 +86,8 @@ Nexus 面向个人工程研发与日常工作，将知识、设计、任务、�
 
 ## 6. 数据设计
 
+CLI/外部 Agent 扩展边界见 [ADR 0003](architecture/decisions/0003-cli-agent-boundary.md)：建议桌面与 CLI 共用 Rust 应用服务和唯一计时运行态；当前只预留边界，测试专用进程连接不视为正式 CLI。
+
 SQLite 保存结构化事实、对象关系和版本索引；不可变文件保存正文与附件。两者由 Nexus 协调写入；全文索引、缩略图及统计缓存可重建。统一来源是明确每类数据的权威位置，不要求把所有二进制内容放入数据库。
 
 核心对象包括 entity、capture_item、knowledge_item、component、project、task、estimate、time_entry、time_block、canvas、design_revision、requirement、decision、calculation、verification、engineering_issue、review 和 agent_run。
