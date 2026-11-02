@@ -1,0 +1,158 @@
+//! Storage experiment, not the production API. Immutable blobs precede DB references.
+use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
+use std::{error::Error, fs, path::PathBuf};
+
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+pub struct Store {
+    root: PathBuf,
+    db: Connection,
+}
+
+fn hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+impl Store {
+    pub fn open(root: PathBuf) -> Result<Self> {
+        fs::create_dir_all(root.join("blobs"))?;
+        let db = Connection::open(root.join("knowledge.db"))?;
+        db.execute_batch(
+            "PRAGMA foreign_keys=ON;
+             CREATE TABLE IF NOT EXISTS item(id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS version(
+               item_id TEXT NOT NULL REFERENCES item(id), revision INTEGER NOT NULL,
+               body_hash TEXT NOT NULL, attachment_hash TEXT,
+               PRIMARY KEY(item_id,revision));",
+        )?;
+        Ok(Self { root, db })
+    }
+
+    fn blob(&self, bytes: &[u8]) -> Result<String> {
+        let digest = hash(bytes);
+        let path = self.root.join("blobs").join(&digest);
+        if path.exists() {
+            if hash(&fs::read(path)?) != digest {
+                return Err("existing blob is corrupt".into());
+            }
+            return Ok(digest);
+        }
+        // Single-writer probe. Production must specify durable directory sync and concurrency.
+        let pending = self.root.join("blobs").join(format!("{digest}.pending"));
+        let file = fs::File::create(&pending)?;
+        use std::io::Write;
+        (&file).write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(pending, path)?;
+        Ok(digest)
+    }
+
+    pub fn save(
+        &mut self,
+        id: &str,
+        expected: i64,
+        body: &[u8],
+        attachment: Option<&[u8]>,
+    ) -> Result<i64> {
+        let body_hash = self.blob(body)?;
+        let attachment_hash = attachment.map(|bytes| self.blob(bytes)).transpose()?;
+        let tx = self.db.transaction()?;
+        tx.execute("INSERT OR IGNORE INTO item VALUES (?1,0)", [id])?;
+        let changed = tx.execute(
+            "UPDATE item SET revision=revision+1 WHERE id=?1 AND revision=?2",
+            params![id, expected],
+        )?;
+        if changed != 1 {
+            return Err("version conflict".into());
+        }
+        tx.execute(
+            "INSERT INTO version VALUES (?1,?2,?3,?4)",
+            params![id, expected + 1, body_hash, attachment_hash],
+        )?;
+        tx.commit()?;
+        Ok(expected + 1)
+    }
+
+    pub fn read(&self, id: &str, revision: i64) -> Result<Vec<u8>> {
+        let (body, attachment): (String, Option<String>) = self.db.query_row(
+            "SELECT body_hash,attachment_hash FROM version WHERE item_id=?1 AND revision=?2",
+            params![id, revision],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let content = self.verified_blob(&body)?;
+        if let Some(digest) = attachment {
+            self.verified_blob(&digest)?;
+        }
+        Ok(content)
+    }
+
+    fn verified_blob(&self, digest: &str) -> Result<Vec<u8>> {
+        if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("invalid digest".into());
+        }
+        let bytes = fs::read(self.root.join("blobs").join(digest))?;
+        if hash(&bytes) != digest {
+            return Err("blob integrity failure".into());
+        }
+        Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_reopen_and_closed_workspace_copy_preserve_content() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        store.save("note", 0, b"v1", Some(b"datasheet"))?;
+        store.save("note", 1, b"v2", Some(b"datasheet"))?;
+        drop(store);
+        let restored = tempfile::tempdir()?;
+        fs::create_dir(restored.path().join("blobs"))?;
+        fs::copy(
+            dir.path().join("knowledge.db"),
+            restored.path().join("knowledge.db"),
+        )?;
+        for entry in fs::read_dir(dir.path().join("blobs"))? {
+            let entry = entry?;
+            fs::copy(
+                entry.path(),
+                restored.path().join("blobs").join(entry.file_name()),
+            )?;
+        }
+        let store = Store::open(restored.path().to_owned())?;
+        assert_eq!(store.read("note", 1)?, b"v1");
+        assert_eq!(store.read("note", 2)?, b"v2");
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_commit_and_unreferenced_blob_do_not_change_current_content() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        store.save("note", 0, b"v1", None)?;
+        assert!(store.save("note", 0, b"stale", None).is_err());
+        store.blob(b"written-before-interruption")?;
+        drop(store);
+        let store = Store::open(dir.path().to_owned())?;
+        assert_eq!(store.read("note", 1)?, b"v1");
+        assert!(store.read("note", 2).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn missing_attachment_and_modified_body_are_detected() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        store.save("note", 0, b"body", Some(b"attachment"))?;
+        fs::remove_file(dir.path().join("blobs").join(hash(b"attachment")))?;
+        assert!(store.read("note", 1).is_err());
+        store.blob(b"attachment")?;
+        fs::write(dir.path().join("blobs").join(hash(b"body")), b"tampered")?;
+        assert!(store.read("note", 1).is_err());
+        Ok(())
+    }
+}
