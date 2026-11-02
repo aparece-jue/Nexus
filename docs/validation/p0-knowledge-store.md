@@ -39,3 +39,13 @@
 dev 的 prototypes/markdown-editor 使用无新增依赖的 JavaScript 状态小样，read/save 端口语义对应现有 Store 边界，尚未创建正式 IPC。node --test 执行 4 项通过：冲突保留文本与原版本；保存中输入保持 dirty 且阻止重复保存；干净保存可重载且迟到读取不覆盖输入；切换对象后旧读取不能覆盖新选择。
 
 增量评审修复了并发 load 的迟到响应问题，引入局部请求序号；没有新增 Manager 或纯转发层。上述使用测试替身，仅证明编辑状态行为，不证明实际 UI、Markdown 渲染、Rust 连接或落盘。下一步接入真实存储并补界面验证，本轮不宣称编辑器已完成。
+
+## 编辑状态到真实存储的集成
+
+新增 Rust 测试专用进程入口 src/main.rs，仅将 JSON read/save 请求映射到既有 Store，不重写业务存储；不是生产 API，也不作为未来 Tauri 之外的长期调用层。新增 serde_json 使用现有离线缓存，更新小样锁文件。
+
+storage.integration.test.mjs 使用 Node 子进程调用真实 Rust 二进制、临时 SQLite 与文件，每次调用重新打开存储。实际验证中文 Markdown 保存为新版本、重新读取、旧版保留、外部更新后冲突草稿保留且数据库外部新版本不被覆盖。临时目录在用例结束清理，测试不访问个人工作区。
+
+本轮 cargo build --offline、cargo test --offline --locked（6 passed）、node --test 两文件（5 passed，含 1 项真实跨语言集成）、cargo clippy --offline --locked --all-targets -- -D warnings 全部通过；格式化完成。跨语言测试必须先构建二进制，不能只运行 Node 后误用陈旧产物。
+
+增量自评：业务边界复用 Store，测试连接仅承担协议转换，新增依赖限 JSON 解析。结论在上述模拟范围可接受；没有可见编辑组件、Markdown 渲染与正式 Tauri IPC 的验证，不宣称 UI 或 P0 整体完成。
