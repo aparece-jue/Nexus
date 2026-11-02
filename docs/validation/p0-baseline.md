@@ -63,3 +63,13 @@
 已读 src/ipc.ts 与 commands/tasks.rs：现有 IPC 有统一错误规范化、版本响应过滤和事件订阅，任务命令复用 catalog 服务。迁入时先沿用现有命令、类型与版本机制；新增知识关联等语义才补必要接口，不再包一层纯转发服务。
 
 当前累计证据为 Rust 选定 61 项、前端 229 项及前端生产构建通过；不是 Rust 全量回归或桌面安装验收。编辑器、正文/附件版本一致性与完整许可证核对仍待完成。
+
+## 全量回归与技能校验补充
+
+用户授权安装缺失依赖后，以 python -m pip install --user PyYAML 安装 PyYAML 6.0.3；未升级 pip。官方 quick_validate.py 对仓库技能与个人技能目录均输出 Skill is valid，退出 0。
+
+执行 `cargo test --offline --locked --manifest-path .local-validation/worktrace-7b9cd47/src-tauri/Cargo.toml`，退出 0。汇总日志中 51 组成功结果：791 passed、0 failed、1 ignored（含零用例目标）；忽略项未按通过计。日志为 `.local-validation/worktrace-rust-full.log`。该全量结果已包含之前 61 项，不能将两者相加。
+
+这为 Worktrace 原版本提供本机自动化复验依据，不证明 Nexus 适配代码或真实系统行为已验证；新代码仍须沿用实际回归和增量评审。正文/附件小样、桌面验收及依赖许可核对仍待执行。
+
+远程推送普通连接发生 reset，HTTP/1.1 单次重试也无法连接 GitHub 443。两次均失败；本地提交保留，禁止把本轮记录声称为已上传。
