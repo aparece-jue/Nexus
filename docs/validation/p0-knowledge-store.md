@@ -49,3 +49,13 @@ storage.integration.test.mjs 使用 Node 子进程调用真实 Rust 二进制、
 本轮 cargo build --offline、cargo test --offline --locked（6 passed）、node --test 两文件（5 passed，含 1 项真实跨语言集成）、cargo clippy --offline --locked --all-targets -- -D warnings 全部通过；格式化完成。跨语言测试必须先构建二进制，不能只运行 Node 后误用陈旧产物。
 
 增量自评：业务边界复用 Store，测试连接仅承担协议转换，新增依赖限 JSON 解析。结论在上述模拟范围可接受；没有可见编辑组件、Markdown 渲染与正式 Tauri IPC 的验证，不宣称 UI 或 P0 整体完成。
+
+## 本机编辑预览
+
+新增 preview.html/preview.mjs：原生 textarea 编辑 Markdown 原文、保存新版本、重载当前版本，展示保存/冲突状态；文本使用 textContent/value 呈现，不执行 Markdown 中的 HTML。复用既有 createEditor，无新增编辑业务状态机。
+
+preview-server.mjs 仅绑定 127.0.0.1 随机端口，使用独立临时工作区和既有 Rust 测试进程；限制 Host、Origin、JSON 请求、固定文档、请求体大小及静态文件白名单，设置 CSP。该服务不是生产 CLI/IPC；不作为正式桌面长期架构。Ctrl+C 正常退出时清理临时资料，强杀无法保证清理；不要存真实资料。
+
+运行前先 cargo build --offline --locked --manifest-path prototypes/knowledge-store/Cargo.toml，再 node prototypes/markdown-editor/preview-server.mjs，打开其输出地址。小样验证原文编辑，不包含 Markdown 渲染预览。
+
+实际 node --test 三文件：6 passed/0 failed，包含资源可访问、真实写入重读和跨 Origin 拒绝。首次受限执行出现本机 EACCES，正常权限重跑通过；不将权限失败算作功能通过。尚未操作真实浏览器，焦点、点击和布局未实测；P0 及正式 Tauri 桌面链仍未完成。
