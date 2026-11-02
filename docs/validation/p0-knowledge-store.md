@@ -59,3 +59,11 @@ preview-server.mjs 仅绑定 127.0.0.1 随机端口，使用独立临时工作�
 运行前先 cargo build --offline --locked --manifest-path prototypes/knowledge-store/Cargo.toml，再 node prototypes/markdown-editor/preview-server.mjs，打开其输出地址。小样验证原文编辑，不包含 Markdown 渲染预览。
 
 实际 node --test 三文件：6 passed/0 failed，包含资源可访问、真实写入重读和跨 Origin 拒绝。首次受限执行出现本机 EACCES，正常权限重跑通过；不将权限失败算作功能通过。尚未操作真实浏览器，焦点、点击和布局未实测；P0 及正式 Tauri 桌面链仍未完成。
+
+## 浏览器实际交互与断点修复
+
+2026-11-03 使用本机预览及 IAB 实测：中文输入后 dirty 状态正确，重读禁用；Tab 从输入框到保存，Return 保存为版本 2；点击重读内容一致。整页刷新发现硬编码初始版本 1 导致显示旧内容，数据库未丢失。
+
+修复：Store 增加读取当前对象版本的查询；测试进程 read revision=0 表示解析当前版本，响应带实际版本；页面先取当前版本再调用已有 load，历史版本读取仍显式指定。此语义仅为小样，正式接口仍按统一契约制定。
+
+修复后真实浏览器刷新保持版本 2 与中文正文，截图见 images/editor-browser-save.png。回归：Rust 7 项、Node 6 项、Clippy 与构建均通过。不是 Tauri/安装验收；仅验证当前视口的基本可读性和上述键盘路径，没有宣称完整可访问性或多屏适配通过。
