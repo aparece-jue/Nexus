@@ -55,6 +55,9 @@ impl Store {
         body: &[u8],
         attachment: Option<&[u8]>,
     ) -> Result<i64> {
+        if id.trim().is_empty() || expected < 0 || expected == i64::MAX {
+            return Err("invalid object id or expected revision".into());
+        }
         let body_hash = self.blob(body)?;
         let attachment_hash = attachment.map(|bytes| self.blob(bytes)).transpose()?;
         let tx = self.db.transaction()?;
@@ -188,6 +191,21 @@ mod tests {
         // A directory at the pending-file path deterministically refuses file creation.
         fs::create_dir(dir.path().join("blobs").join(format!("{digest}.pending")))?;
         assert!(store.save("new-note", 0, b"blocked", None).is_err());
+        let count: i64 = store
+            .db
+            .query_row("SELECT count(*) FROM item", [], |row| row.get(0))?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_identity_or_revision_is_rejected_before_file_writes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        for (id, revision) in [(" ", 0), ("note", -1), ("note", i64::MAX)] {
+            assert!(store.save(id, revision, b"must-not-write", None).is_err());
+        }
+        assert_eq!(fs::read_dir(dir.path().join("blobs"))?.count(), 0);
         let count: i64 = store
             .db
             .query_row("SELECT count(*) FROM item", [], |row| row.get(0))?;
