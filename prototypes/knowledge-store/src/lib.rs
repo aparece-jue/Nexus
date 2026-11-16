@@ -6,6 +6,7 @@ use std::{error::Error, fs, path::PathBuf};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 mod task_status;
 pub mod tasks;
+pub mod timer;
 
 pub struct Store {
     root: PathBuf,
@@ -54,7 +55,7 @@ impl Store {
         let mut db = Connection::open(root.join("knowledge.db"))?;
         db.execute_batch("PRAGMA foreign_keys=ON;")?;
         let schema: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if schema > 4 {
+        if schema > 5 {
             return Err("workspace schema is newer than this application; refusing writes".into());
         }
         fs::create_dir_all(root.join("blobs"))?;
@@ -121,6 +122,16 @@ impl Store {
             db.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
             let tx = db.transaction()?;
             tx.execute_batch(tasks::SCHEMA_4)?;
+            tx.commit()?;
+        }
+        if schema <= 4 {
+            let backup = root.join("before-schema-5.db");
+            if backup.exists() {
+                return Err("migration backup already exists; inspect it before retrying".into());
+            }
+            db.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
+            let tx = db.transaction()?;
+            tx.execute_batch(timer::SCHEMA)?;
             tx.commit()?;
         }
         Ok(Self { root, db })
