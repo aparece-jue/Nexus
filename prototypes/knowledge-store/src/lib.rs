@@ -17,11 +17,15 @@ fn hash(bytes: &[u8]) -> String {
 impl Store {
     /// List current bodies through the same integrity checks as individual reads.
     pub fn list_notes(&self) -> Result<Vec<(String, i64, String)>> {
+        self.list_notes_by_archive(false)
+    }
+
+    pub fn list_notes_by_archive(&self, archived: bool) -> Result<Vec<(String, i64, String)>> {
         let mut statement = self
             .db
-            .prepare("SELECT id, revision FROM item ORDER BY id")?;
+            .prepare("SELECT id, revision FROM item WHERE archived=?1 ORDER BY id")?;
         let identities = statement
-            .query_map([], |row| {
+            .query_map([archived], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -48,7 +52,7 @@ impl Store {
         let mut db = Connection::open(root.join("knowledge.db"))?;
         db.execute_batch("PRAGMA foreign_keys=ON;")?;
         let schema: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if schema > 1 {
+        if schema > 2 {
             return Err("workspace schema is newer than this application; refusing writes".into());
         }
         fs::create_dir_all(root.join("blobs"))?;
@@ -86,6 +90,17 @@ impl Store {
             )?;
             tx.commit()?;
         }
+        if schema <= 1 {
+            // SQLite creates a consistent, non-overwriting snapshot before altering the schema.
+            let backup = root.join("before-schema-2.db");
+            if backup.exists() {
+                return Err("migration backup already exists; inspect it before retrying".into());
+            }
+            db.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
+            let tx = db.transaction()?;
+            tx.execute_batch("ALTER TABLE item ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1)); PRAGMA user_version=2;")?;
+            tx.commit()?;
+        }
         Ok(Self { root, db })
     }
 
@@ -121,9 +136,12 @@ impl Store {
         let body_hash = self.blob(body)?;
         let attachment_hash = attachment.map(|bytes| self.blob(bytes)).transpose()?;
         let tx = self.db.transaction()?;
-        tx.execute("INSERT OR IGNORE INTO item VALUES (?1,0)", [id])?;
+        tx.execute(
+            "INSERT OR IGNORE INTO item(id,revision) VALUES (?1,0)",
+            [id],
+        )?;
         let changed = tx.execute(
-            "UPDATE item SET revision=revision+1 WHERE id=?1 AND revision=?2",
+            "UPDATE item SET revision=revision+1 WHERE id=?1 AND revision=?2 AND archived=0",
             params![id, expected],
         )?;
         if changed != 1 {
@@ -143,6 +161,31 @@ impl Store {
             .query_row("SELECT revision FROM item WHERE id=?1", [id], |row| {
                 row.get(0)
             })?)
+    }
+
+    pub fn is_note_archived(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .db
+            .query_row("SELECT archived FROM item WHERE id=?1", [id], |row| {
+                row.get(0)
+            })?)
+    }
+
+    pub fn set_note_archived(&mut self, id: &str, expected: i64, archived: bool) -> Result<i64> {
+        if expected < 1 || expected == i64::MAX {
+            return Err("invalid expected revision".into());
+        }
+        let tx = self.db.transaction()?;
+        let changed = tx.execute("UPDATE item SET archived=?3,revision=revision+1 WHERE id=?1 AND revision=?2 AND archived<>?3", params![id, expected, archived])?;
+        if changed != 1 {
+            return Err("version conflict or unchanged archive state".into());
+        }
+        let copied = tx.execute("INSERT INTO version(item_id,revision,body_hash,attachment_hash) SELECT item_id,?2+1,body_hash,attachment_hash FROM version WHERE item_id=?1 AND revision=?2", params![id,expected])?;
+        if copied != 1 {
+            return Err("missing current content version".into());
+        }
+        tx.commit()?;
+        Ok(expected + 1)
     }
 
     /// Seed a synthetic workspace without treating corruption as a missing note.
@@ -186,6 +229,67 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_archive_version_copy_rolls_back_visibility_and_revision() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        store.save("note", 0, b"preserve", None)?;
+        store.db.execute_batch("CREATE TRIGGER reject_archive_version BEFORE INSERT ON version BEGIN SELECT RAISE(ABORT,'injected failure'); END;")?;
+        assert!(store.set_note_archived("note", 1, true).is_err());
+        assert!(!store.is_note_archived("note")?);
+        assert_eq!(store.current_revision("note")?, 1);
+        assert_eq!(store.list_notes()?.len(), 1);
+        assert_eq!(store.read("note", 1)?, b"preserve");
+        Ok(())
+    }
+
+    #[test]
+    fn archive_restore_survives_reopen_and_rejects_stale_or_archived_writes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        store.save("note", 0, b"keep content", Some(b"attachment"))?;
+        assert_eq!(store.set_note_archived("note", 1, true)?, 2);
+        assert!(store.list_notes()?.is_empty());
+        assert_eq!(store.list_notes_by_archive(true)?.len(), 1);
+        assert!(store.save("note", 2, b"forbidden", None).is_err());
+        assert!(store.set_note_archived("note", 1, false).is_err());
+        drop(store);
+        let mut store = Store::open(dir.path().to_owned())?;
+        assert_eq!(store.read("note", 2)?, b"keep content");
+        assert_eq!(store.set_note_archived("note", 2, false)?, 3);
+        assert_eq!(store.list_notes()?.len(), 1);
+        assert_eq!(store.read("note", 1)?, b"keep content");
+        assert_eq!(store.save("note", 3, b"edited after restore", None)?, 4);
+        Ok(())
+    }
+
+    #[test]
+    fn schema_one_migration_preserves_content_and_leaves_readable_snapshot() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = Connection::open(dir.path().join("knowledge.db"))?;
+        db.execute_batch("CREATE TABLE item(id TEXT PRIMARY KEY, revision INTEGER NOT NULL); CREATE TABLE version(item_id TEXT NOT NULL REFERENCES item(id),revision INTEGER NOT NULL,body_hash TEXT NOT NULL,attachment_hash TEXT,PRIMARY KEY(item_id,revision)); PRAGMA user_version=1;")?;
+        let digest = hash(b"legacy");
+        fs::create_dir(dir.path().join("blobs"))?;
+        fs::write(dir.path().join("blobs").join(&digest), b"legacy")?;
+        db.execute("INSERT INTO item VALUES ('old',1)", [])?;
+        db.execute("INSERT INTO version VALUES ('old',1,?1,NULL)", [&digest])?;
+        drop(db);
+        let store = Store::open(dir.path().to_owned())?;
+        assert_eq!(store.read("old", 1)?, b"legacy");
+        assert_eq!(store.list_notes()?.len(), 1);
+        let snapshot = Connection::open(dir.path().join("before-schema-2.db"))?;
+        assert_eq!(
+            snapshot.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?,
+            1
+        );
+        assert_eq!(
+            snapshot.query_row("SELECT revision FROM item WHERE id='old'", [], |row| row
+                .get::<_, i64>(0))?,
+            1
+        );
+        Ok(())
+    }
 
     #[test]
     fn multiple_notes_reopen_without_cross_writes_and_reject_stale_edits() -> Result<()> {

@@ -25,6 +25,7 @@ fn open_workspace(root: std::path::PathBuf) -> Result<Workspace, String> {
 struct Note {
     revision: i64,
     text: String,
+    archived: bool,
 }
 
 #[derive(Deserialize)]
@@ -60,7 +61,12 @@ fn read_by_id(workspace: &Workspace, id: &str, revision: Option<i64>) -> Result<
         .map_err(|e| e.to_string())?;
     let text = String::from_utf8(store.read(id, revision).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    Ok(Note { revision, text })
+    let archived = store.is_note_archived(id).map_err(|e| e.to_string())?;
+    Ok(Note {
+        revision,
+        text,
+        archived,
+    })
 }
 
 #[derive(Serialize)]
@@ -73,12 +79,13 @@ struct NoteSummary {
 #[tauri::command]
 async fn list_notes(
     workspace: tauri::State<'_, Arc<Workspace>>,
+    archived: Option<bool>,
 ) -> Result<Vec<NoteSummary>, String> {
     let workspace = workspace.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let store = workspace.store.lock().map_err(|_| "存储状态不可用")?;
         Ok(store
-            .list_notes()
+            .list_notes_by_archive(archived.unwrap_or(false))
             .map_err(|e| e.to_string())?
             .into_iter()
             .map(|(id, revision, title)| NoteSummary {
@@ -87,6 +94,26 @@ async fn list_notes(
                 title,
             })
             .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_note_archived(
+    workspace: tauri::State<'_, Arc<Workspace>>,
+    id: String,
+    expected_revision: i64,
+    archived: bool,
+) -> Result<i64, String> {
+    let workspace = workspace.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace
+            .store
+            .lock()
+            .map_err(|_| "存储状态不可用")?
+            .set_note_archived(&id, expected_revision, archived)
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -127,7 +154,12 @@ fn main() {
             app.manage(Arc::new(workspace));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![read_note, save_note, list_notes])
+        .invoke_handler(tauri::generate_handler![
+            read_note,
+            save_note,
+            list_notes,
+            set_note_archived
+        ])
         .run(tauri::generate_context!())
         .expect("desktop probe failed");
 }

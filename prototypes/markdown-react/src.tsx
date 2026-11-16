@@ -8,7 +8,7 @@ const SourceEditor = lazy(() => import('./SourceEditor').then(module => ({ defau
 const MarkdownPreview = lazy(() => import('./MarkdownPreview').then(module => ({ default: module.MarkdownPreview })));
 
 const sample = '# Nexus 编辑组件验证\n\n- [ ] 中文输入与撤销\n\n| 器件 | 状态 |\n| --- | --- |\n| AD5422 | 待评估 |\n\n```rust\nlet revision = 1;\n```';
-type Note = { revision: number; text: string };
+type Note = { revision: number; text: string; archived?: boolean };
 type NoteSummary = { id: string; revision: number; title: string };
 
 export function App() {
@@ -26,17 +26,36 @@ export function App() {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
-  async function refreshNotes() {
-    if (isTauri()) setNotes(await invoke<NoteSummary[]>('list_notes'));
+  const [showArchived, setShowArchived] = useState(false);
+  const [selectedArchived, setSelectedArchived] = useState(false);
+  async function refreshNotes(archived = showArchived) {
+    if (isTauri()) setNotes(await invoke<NoteSummary[]>('list_notes', { archived }));
   }
-  async function load(id = 'desktop-note') {
+  async function load(id = 'desktop-note', archived = false) {
     setLoading(true);
     try {
       const note = isTauri() ? await invoke<Note>('read_note', { id }) : { revision: 0, text: sample };
       await editor.load(id, note.revision);
       setState(editor.snapshot()); setInitial(editor.snapshot().text); setError('');
+      setSelectedArchived(note.archived ?? archived);
       await refreshNotes();
     } catch (failure) { setError(String(failure)); }
+    finally { setLoading(false); }
+  }
+  async function changeArchive(note: NoteSummary, archived: boolean) {
+    if (loading || state.dirty || state.saving) return;
+    setLoading(true); setError('');
+    try {
+      await invoke<number>('set_note_archived', { id: note.id, expectedRevision: note.revision, archived });
+      if (state.id === note.id) await load(note.id, archived);
+      await refreshNotes();
+    } catch (failure) { setError(String(failure)); }
+    finally { setLoading(false); }
+  }
+  async function toggleArchiveList() {
+    setLoading(true); setError('');
+    try { await refreshNotes(!showArchived); setShowArchived(!showArchived); }
+    catch (failure) { setError(String(failure)); }
     finally { setLoading(false); }
   }
   useEffect(() => { void load(); }, []);
@@ -62,19 +81,23 @@ export function App() {
     <p>{isTauri() ? '独立验证工作区：退出后保留，未加密。请勿存入真实工作资料。' : '浏览器组件模式：不保存资料。'}</p>
     <button disabled={!isTauri() || loading || state.dirty || state.saving} onClick={() => void createNote()}>新建便签</button>{' '}
     <button aria-pressed={preview} onClick={() => setPreview(!preview)}>渲染预览</button>{' '}
-    <button disabled={!isTauri() || loading || !state.dirty || state.saving} onClick={() => void save()}>保存新版本</button>{' '}
-    <button disabled={loading || state.dirty || state.saving} onClick={() => void load(state.id ?? 'desktop-note')}>重新读取</button>
+    <button disabled={!isTauri() || selectedArchived || loading || !state.dirty || state.saving} onClick={() => void save()}>保存新版本</button>{' '}
+    <button disabled={loading || state.dirty || state.saving} onClick={() => void load(state.id ?? 'desktop-note', selectedArchived)}>重新读取</button>{' '}
+    <button disabled={loading || state.dirty || state.saving} onClick={() => void toggleArchiveList()}>{showArchived ? '返回便签' : '查看归档'}</button>
     <p>编辑后先保存，再切换便签。标题取正文首个非空行。</p>
     <nav aria-label="便签列表">
       <input aria-label="按标题查找便签" placeholder="按标题查找便签" value={query} onChange={event => setQuery(event.target.value)} />
-      {notes.filter(note => note.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(note => <button
-        key={note.id} aria-current={state.id === note.id ? 'page' : undefined}
-        disabled={loading || state.dirty || state.saving} onClick={() => void load(note.id)}
-      >{note.title || '未命名便签'}</button>)}
+      {notes.filter(note => note.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(note => <span key={note.id}>
+        <button aria-current={state.id === note.id ? 'page' : undefined}
+          disabled={loading || state.dirty || state.saving} onClick={() => void load(note.id, showArchived)}
+        >{note.title || '未命名便签'}</button>
+        <button aria-label={`${showArchived ? '恢复' : '归档'} ${note.title}`} disabled={loading || state.dirty || state.saving}
+          onClick={() => void changeArchive(note, !showArchived)}>{showArchived ? '恢复' : '归档'}</button>
+      </span>)}
     </nav>
     <p role="status">{error || state.error || (state.saving ? '保存中' : `版本 ${state.revision} · ${state.dirty ? '有未保存修改' : '已读取'}`)}</p>
     {loading ? <p role="status">正在读取便签…</p> : <Suspense fallback={<p role="status">正在加载编辑组件…</p>}><div className="panels">
-      <section aria-label="编辑区">{initial !== null && <SourceEditor
+      <section aria-label="编辑区">{selectedArchived ? <p>此便签已归档，请在归档列表恢复后编辑。</p> : initial !== null && <SourceEditor
         initial={initial} onChange={value => { editor.edit(value); setState(editor.snapshot()); }}
       />}</section>
       {preview && <section aria-label="Markdown 预览"><MarkdownPreview text={state.text} /></section>}
