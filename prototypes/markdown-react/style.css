@@ -11,3 +11,67 @@ button:focus-visible { outline: 3px solid #2868cf; }
 table { border-collapse: collapse; } td, th { border: 1px solid #aab5c4; padding: 6px 12px; }
 pre { overflow: auto; background: #f1f4f8; padding: 12px; }
 @media (max-width: 700px) { .panels { flex-direction: column; } }
+
+/* Workspace layout: navigation, task list, and a separate detail surface. */
+* { box-sizing: border-box; }
+body { font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; background:#fff; color:#292d36; }
+.application { max-width:none; padding:0; }
+[hidden] { display:none !important; }
+.app-bar { height:54px; display:flex; align-items:center; gap:32px; padding:0 24px; border-bottom:1px solid #e9eaf0; }
+.app-bar strong { letter-spacing:1px; color:#544477; }
+.app-bar nav { padding:0; gap:4px; }
+.app-bar > span { margin-left:auto; color:#92949d; font-size:12px; }
+button { background:transparent; border:1px solid #dedfe6; border-radius:6px; padding:6px 10px; color:inherit; cursor:pointer; }
+button:hover:not(:disabled) { background:#f0eef8; }
+button:disabled { cursor:default; opacity:.45; }
+button[aria-pressed="true"] { background:#eeeaf6; color:#5f488d; }
+input,select { font:inherit; border:1px solid #e3e4ea; border-radius:6px; padding:7px 9px; min-width:0; background:#fff; color:inherit; }
+input:focus,select:focus { outline:2px solid #d5cbea; outline-offset:1px; }
+input[type="checkbox"] { accent-color:#7860a8; }
+.task-layout { display:grid; grid-template-columns:225px minmax(360px,1fr) 330px; min-height:calc(100vh - 54px); padding:0; border:0; border-radius:0; }
+.workspace-sidebar { background:#f8f8fb; border-right:1px solid #e9eaf0; padding:25px 16px; }
+.brand { margin:0 10px 28px; font-size:22px; color:#544477; }
+.brand span { display:block; color:#96929e; font-size:12px; font-weight:400; margin-top:4px; }
+.workspace-sidebar h3 { color:#a09da7; font-size:12px; font-weight:500; margin:26px 10px 10px; }
+.nav-item { display:flex; justify-content:space-between; width:100%; text-align:left; border:0; margin:3px 0; padding:9px 12px; }
+.nav-item.active { background:#eeedf3; color:#574873; }
+.workspace-sidebar form { display:flex; flex-wrap:wrap; gap:6px; margin:12px 6px; }
+.workspace-sidebar input { width:100%; background:transparent; }
+.sidebar-hint { color:#9996a1; font-size:12px; margin:20px 8px; }
+.task-list-pane { padding:24px 24px 60px; min-width:0; }
+.pane-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
+.pane-heading h1 { font-size:22px; margin:0; font-weight:650; }
+.pane-heading > span { color:#9b98a3; }
+.task-tools form { display:flex; flex-wrap:wrap; gap:7px; margin:12px 0; }
+.task-tools input[aria-label="任务标题"] { flex:1 0 100%; width:100%; background:#f7f7fa; border-color:transparent; padding:12px; }
+.task-tools input:not([type="checkbox"]) { flex-grow:1; width:120px; }
+.task-tools input[type="checkbox"] { width:auto; }
+.task-tools label { font-size:12px; color:#8b8793; }
+.list-feedback { display:flex; justify-content:space-between; align-items:center; padding:12px 0; color:#aaa6b1; font-size:12px; }
+.list-feedback button { border:0; font-size:12px; color:#96919f; }
+.task-tree { list-style:none; padding:0; margin:0; }
+.task-row { display:flex; align-items:center; gap:8px; min-height:49px; border-bottom:1px solid #f0eff4; padding-right:8px; }
+.task-row.selected { background:#f0eef5; border-radius:8px; }
+.disclosure { width:20px; border:0; padding:0; color:#a5a0ad; }
+.disclosure-space { width:20px; flex-shrink:0; }
+.task-state { color:#a5a0ad; font-size:20px; }.task-state.terminal { color:#7b7194; }
+.task-select { border:0; background:transparent; text-align:left; padding:8px 0; flex:1; overflow-wrap:anywhere; }
+.task-select:disabled { opacity:1; }
+.task-meta { font-size:11px; color:#a29bab; white-space:nowrap; }
+.task-tags { color:#9e91b1; font-size:11px; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-detail-pane { border-left:1px solid #e9eaf0; padding:26px 22px; background:#fdfdfe; }
+.task-detail-pane fieldset { border:0; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+.task-detail-pane legend { font-size:17px; font-weight:600; margin-bottom:24px; }
+.task-detail-pane input[aria-label="编辑任务标题"] { font-size:20px; font-weight:600; border-color:transparent; padding-left:0; }
+.detail-actions { margin-top:30px; border-top:1px solid #eeedf3; padding-top:16px; }
+.detail-actions h3 { color:#96909f; font-size:12px; font-weight:400; }
+.detail-actions button { margin:4px; font-size:12px; }
+.empty-state { color:#aaa5b2; padding:55px 12px; text-align:center; font-size:13px; }
+.empty-state h2 { font-size:17px; color:#8f889c; font-weight:500; }
+.error-message { color:#ad3b48; background:#fff2f3; padding:10px; border-radius:6px; }
+.notebook { padding:24px; max-width:1400px; margin:auto; }
+.notebook > nav { display:flex; gap:8px; }
+.notebook section { border-color:#e9e6ef; }
+[role="dialog"] { position:fixed; inset:10% 15%; z-index:10; overflow:auto; padding:28px; background:#fff; box-shadow:0 10px 60px #25203635; }
+@media(max-width:1050px) { .task-layout { grid-template-columns:180px minmax(280px,1fr) 280px; }.task-list-pane { padding:20px 14px; }.task-meta,.task-tags { display:none; } }
+@media(max-width:780px) { .task-layout { grid-template-columns:150px minmax(0,1fr); }.task-detail-pane { grid-column:2; border-top:1px solid #e9eaf0; }.workspace-sidebar { grid-row:1 / 3; }.app-bar > span { display:none; } }

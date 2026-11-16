@@ -23,6 +23,7 @@ export function App() {
   const [state, setState] = useState(editor.snapshot());
   const [initial, setInitial] = useState<string | null>(null);
   const [preview, setPreview] = useState(true);
+  const [view,setView] = useState<'tasks'|'notes'>('tasks');
   const [error, setError] = useState('');
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -84,14 +85,21 @@ export function App() {
     } catch (failure) { setError(String(failure)); }
     finally { setLoading(false); }
   }
-  return <main>
-    <h1>Nexus · 便签工作区</h1>
+  return <main className="application">
+    <header className="app-bar"><strong>Nexus</strong><nav aria-label="工作区切换">
+      <button aria-pressed={view==='tasks'} onClick={()=>setView('tasks')}>事务</button>
+      <button aria-pressed={view==='notes'} onClick={()=>setView('notes')}>便签</button>
+    </nav><span>本地验证版 · 仅合成资料</span></header>
+    <div hidden={view!=='tasks'}>
     <Tasks source={!state.dirty && !state.saving && !loading && !selectedArchived && state.id ? { id: state.id, revision: state.revision } : null}
       onOpenSource={(id, revision) => { void openSource(id, revision); }} />
+    </div>
     {sourcePreview && <section role="dialog" aria-label="任务来源版本">
       <h2>来源版本 {sourcePreview.revision}</h2><pre>{sourcePreview.text}</pre>
       <button onClick={() => setSourcePreview(null)}>关闭来源</button>
     </section>}
+    <div className="notebook" hidden={view!=='notes'}>
+    <h1>便签</h1>
     <p>{isTauri() ? '独立验证工作区：退出后保留，未加密。请勿存入真实工作资料。' : '浏览器组件模式：不保存资料。'}</p>
     <button disabled={!isTauri() || loading || state.dirty || state.saving} onClick={() => void createNote()}>新建便签</button>{' '}
     <button aria-pressed={preview} onClick={() => setPreview(!preview)}>渲染预览</button>{' '}
@@ -116,6 +124,7 @@ export function App() {
       />}</section>
       {preview && <section aria-label="Markdown 预览"><MarkdownPreview text={state.text} /></section>}
     </div></Suspense>}
+    </div>
   </main>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

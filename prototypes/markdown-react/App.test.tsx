@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render as renderBase, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
 const backend = vi.hoisted(() => ({ notes: new Map<string, { revision: number; text: string; archived?: boolean }>() }));
@@ -33,6 +33,11 @@ vi.mock('./SourceEditor', () => ({ SourceEditor: ({ initial, onChange }: { initi
   <textarea aria-label="Markdown 原文" defaultValue={initial} onChange={event => onChange(event.target.value)} /> }));
 vi.mock('./MarkdownPreview', () => ({ MarkdownPreview: ({ text }: { text: string }) => <div>{text}</div> }));
 import { App } from './src';
+function render(ui: React.ReactNode) {
+  const view=renderBase(ui);
+  fireEvent.click(screen.getByRole('button',{name:'便签'}));
+  return view;
+}
 
 afterEach(() => { cleanup(); backend.notes.clear(); });
 
