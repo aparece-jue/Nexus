@@ -4,6 +4,18 @@ use crate::{Result, Store};
 use rusqlite::params;
 use serde::Serialize;
 
+pub(crate) fn ensure_task_not_timed(db: &rusqlite::Connection, task: &str) -> Result<()> {
+    let active: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM work_session WHERE task_id=?1 AND state<>'finished')",
+        [task],
+        |r| r.get(0),
+    )?;
+    if active {
+        return Err("请先结束或处置该任务的计时会话，再修改任务或添加子任务".into());
+    }
+    Ok(())
+}
+
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE work_session(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES task(id),state TEXT NOT NULL CHECK(state IN ('running','paused','recovering','finished')),row_version INTEGER NOT NULL DEFAULT 1,last_at_ms INTEGER NOT NULL);
 CREATE UNIQUE INDEX single_active_session ON work_session((1)) WHERE state<>'finished';
@@ -21,6 +33,18 @@ pub struct TimerSnapshot {
 }
 
 impl Store {
+    /// Release the active slot without turning an unknown interval into confirmed work.
+    /// Pending evidence remains queryable; this is not a duration correction.
+    pub fn finish_recovery(&mut self, id: &str, expected: i64) -> Result<()> {
+        if expected < 1 || expected == i64::MAX {
+            return Err("无效版本".into());
+        }
+        let changed=self.db.execute("UPDATE work_session SET state='finished',row_version=row_version+1 WHERE id=?1 AND row_version=?2 AND state='recovering'",params![id,expected])?;
+        if changed != 1 {
+            return Err("恢复会话已变化，请刷新后重试".into());
+        }
+        Ok(())
+    }
     pub fn start_timer(&mut self, id: &str, task: &str, at_ms: i64) -> Result<()> {
         if id.trim().is_empty() || at_ms < 0 {
             return Err("无效会话或时钟".into());
@@ -143,6 +167,43 @@ mod tests {
     fn task(store: &mut Store, id: &str) -> Result<()> {
         store.create_task(id, id, None, None, None, &[])?;
         store.transition_task(id, 1, "Ready", false)
+    }
+    #[test]
+    fn active_and_recovering_sessions_protect_task_then_release_without_confirming_unknown_time(
+    ) -> Result<()> {
+        use crate::tasks::TaskFields;
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        task(&mut store, "task")?;
+        store.start_timer("one", "task", 0)?;
+        let fields = TaskFields {
+            title: "changed".into(),
+            project_id: None,
+            parent_id: None,
+            tags: vec!["tag".into()],
+        };
+        assert!(store.update_task("task", 2, &fields, true).is_err());
+        assert!(store.transition_task("task", 2, "Done", false).is_err());
+        assert!(store
+            .create_task("child", "child", None, None, Some("task"), &[])
+            .is_err());
+        store.change_timer("one", 1, "pause", 1000)?;
+        assert!(store.update_task("task", 2, &fields, false).is_err());
+        store.change_timer("one", 2, "resume", 2000)?;
+        drop(store);
+        let mut store = Store::open(dir.path().to_owned())?;
+        store.recover_interrupted_timers()?;
+        assert!(store.update_task("task", 2, &fields, false).is_err());
+        assert!(store.finish_recovery("one", 3).is_err());
+        store.finish_recovery("one", 4)?;
+        assert!(store.finish_recovery("one", 4).is_err());
+        let snapshot = store.timer_snapshot("one")?;
+        assert_eq!(snapshot.confirmed_ms, 1000);
+        assert_eq!(snapshot.pending_intervals, 1);
+        store.start_timer("two", "task", 3000)?;
+        store.change_timer("two", 1, "finish", 4000)?;
+        store.update_task("task", 2, &fields, false)?;
+        Ok(())
     }
     #[test]
     fn pause_exclusion_duplicate_conflict_and_reopen_preserve_thirty_five_minutes() -> Result<()> {

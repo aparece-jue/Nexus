@@ -51,6 +51,7 @@ fn check_parent(
     archived: bool,
 ) -> Result<()> {
     if let Some(parent) = parent {
+        crate::timer::ensure_task_not_timed(db, parent)?;
         let (parent_project, parent_archived, status): (Option<String>, bool, String) = db
             .query_row(
                 "SELECT project_id,archived,status FROM task WHERE id=?1",
@@ -232,6 +233,7 @@ impl Store {
             return Err("无效版本".into());
         }
         let tx = self.db.transaction()?;
+        crate::timer::ensure_task_not_timed(&tx, id)?;
         check_parent(
             &tx,
             id,
@@ -263,6 +265,7 @@ impl Store {
         }
         let target = TaskStatus::parse(target).ok_or("未知目标状态")?;
         let tx = self.db.transaction()?;
+        crate::timer::ensure_task_not_timed(&tx, id)?;
         let current: (String, i64) = tx.query_row(
             "SELECT status,row_version FROM task WHERE id=?1 AND archived=0",
             [id],
