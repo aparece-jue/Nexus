@@ -15,6 +15,34 @@ fn hash(bytes: &[u8]) -> String {
 }
 
 impl Store {
+    /// List current bodies through the same integrity checks as individual reads.
+    pub fn list_notes(&self) -> Result<Vec<(String, i64, String)>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT id, revision FROM item ORDER BY id")?;
+        let identities = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        identities
+            .into_iter()
+            .map(|(id, revision)| {
+                let body = String::from_utf8(self.read(&id, revision)?)?;
+                let title = body
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or("未命名便签")
+                    .trim()
+                    .trim_start_matches('#')
+                    .trim()
+                    .chars()
+                    .take(80)
+                    .collect();
+                Ok((id, revision, title))
+            })
+            .collect()
+    }
     pub fn open(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(&root)?;
         let mut db = Connection::open(root.join("knowledge.db"))?;
@@ -158,6 +186,28 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiple_notes_reopen_without_cross_writes_and_reject_stale_edits() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = Store::open(dir.path().to_owned())?;
+        store.save("first", 0, "# 第一条\n正文".as_bytes(), None)?;
+        store.save("second", 0, b"Second", None)?;
+        store.save("first", 1, "# 修改后\n内容".as_bytes(), None)?;
+        assert!(store.save("first", 1, b"stale", None).is_err());
+        drop(store);
+        let store = Store::open(dir.path().to_owned())?;
+        assert_eq!(
+            store.list_notes()?,
+            vec![
+                ("first".into(), 2, "修改后".into()),
+                ("second".into(), 1, "Second".into())
+            ]
+        );
+        assert_eq!(store.read("second", 1)?, b"Second");
+        assert_eq!(store.read("first", 1)?, "# 第一条\n正文".as_bytes());
+        Ok(())
+    }
 
     #[test]
     fn versions_reopen_and_closed_workspace_copy_preserve_content() -> Result<()> {

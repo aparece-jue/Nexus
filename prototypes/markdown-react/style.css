@@ -4,6 +4,9 @@ main { max-width: 1200px; margin: auto; padding: 24px; }
 section { flex: 1; min-width: 0; padding: 16px; background: white; border: 1px solid #cbd5e1; border-radius: 8px; overflow-wrap: anywhere; }
 .cm-editor { min-height: 400px; }
 button { padding: 8px 16px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0; }
+nav input { padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+button[aria-current="page"] { background: #dbeafe; border: 1px solid #2563eb; }
 button:focus-visible { outline: 3px solid #2868cf; }
 table { border-collapse: collapse; } td, th { border: 1px solid #aab5c4; padding: 6px 12px; }
 pre { overflow: auto; background: #f1f4f8; padding: 12px; }

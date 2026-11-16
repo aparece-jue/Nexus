@@ -29,36 +29,67 @@ struct Note {
 
 #[derive(Deserialize)]
 struct SaveRequest {
+    id: Option<String>,
     expected_revision: i64,
     text: String,
-}
-
-fn read(workspace: &Workspace, revision: Option<i64>) -> Result<Note, String> {
-    let store = workspace.store.lock().map_err(|_| "存储状态不可用")?;
-    let revision = match revision {
-        Some(value) => value,
-        None => store
-            .current_revision("desktop-note")
-            .map_err(|e| e.to_string())?,
-    };
-    let text = String::from_utf8(
-        store
-            .read("desktop-note", revision)
-            .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(Note { revision, text })
 }
 
 #[tauri::command]
 async fn read_note(
     workspace: tauri::State<'_, Arc<Workspace>>,
+    id: Option<String>,
     revision: Option<i64>,
 ) -> Result<Note, String> {
     let workspace = workspace.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || read(&workspace, revision))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        read_by_id(
+            &workspace,
+            id.as_deref().unwrap_or("desktop-note"),
+            revision,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn read_by_id(workspace: &Workspace, id: &str, revision: Option<i64>) -> Result<Note, String> {
+    let store = workspace.store.lock().map_err(|_| "存储状态不可用")?;
+    let revision = revision
+        .map(Ok)
+        .unwrap_or_else(|| store.current_revision(id))
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8(store.read(id, revision).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    Ok(Note { revision, text })
+}
+
+#[derive(Serialize)]
+struct NoteSummary {
+    id: String,
+    revision: i64,
+    title: String,
+}
+
+#[tauri::command]
+async fn list_notes(
+    workspace: tauri::State<'_, Arc<Workspace>>,
+) -> Result<Vec<NoteSummary>, String> {
+    let workspace = workspace.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = workspace.store.lock().map_err(|_| "存储状态不可用")?;
+        Ok(store
+            .list_notes()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|(id, revision, title)| NoteSummary {
+                id,
+                revision,
+                title,
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -76,7 +107,7 @@ async fn save_note(
             .lock()
             .map_err(|_| "存储状态不可用")?
             .save(
-                "desktop-note",
+                request.id.as_deref().unwrap_or("desktop-note"),
                 request.expected_revision,
                 request.text.as_bytes(),
                 None,
@@ -96,7 +127,7 @@ fn main() {
             app.manage(Arc::new(workspace));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![read_note, save_note])
+        .invoke_handler(tauri::generate_handler![read_note, save_note, list_notes])
         .run(tauri::generate_context!())
         .expect("desktop probe failed");
 }
@@ -116,10 +147,23 @@ mod tests {
         let workspace = Workspace {
             store: Mutex::new(store),
         };
-        assert_eq!(read(&workspace, None).unwrap().revision, 2);
-        assert_eq!(read(&workspace, None).unwrap().text, "中文更新");
-        assert_eq!(read(&workspace, Some(1)).unwrap().text, "original");
-        assert!(read(&workspace, Some(99)).is_err());
+        assert_eq!(
+            read_by_id(&workspace, "desktop-note", None)
+                .unwrap()
+                .revision,
+            2
+        );
+        assert_eq!(
+            read_by_id(&workspace, "desktop-note", None).unwrap().text,
+            "中文更新"
+        );
+        assert_eq!(
+            read_by_id(&workspace, "desktop-note", Some(1))
+                .unwrap()
+                .text,
+            "original"
+        );
+        assert!(read_by_id(&workspace, "desktop-note", Some(99)).is_err());
     }
 
     #[test]
@@ -134,8 +178,21 @@ mod tests {
             .unwrap();
         drop(workspace);
         let reopened = open_workspace(directory.path().to_owned()).unwrap();
-        assert_eq!(read(&reopened, None).unwrap().revision, 2);
-        assert_eq!(read(&reopened, None).unwrap().text, "saved draft");
-        assert_eq!(read(&reopened, Some(1)).unwrap().revision, 1);
+        assert_eq!(
+            read_by_id(&reopened, "desktop-note", None)
+                .unwrap()
+                .revision,
+            2
+        );
+        assert_eq!(
+            read_by_id(&reopened, "desktop-note", None).unwrap().text,
+            "saved draft"
+        );
+        assert_eq!(
+            read_by_id(&reopened, "desktop-note", Some(1))
+                .unwrap()
+                .revision,
+            1
+        );
     }
 }
