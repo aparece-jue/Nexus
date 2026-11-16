@@ -29,6 +29,7 @@ export function Tasks({ source, onOpenSource }: {
   const [projectView, setProjectView] = useState('');
   const [inboxOnly,setInboxOnly] = useState(false);
   const [closed, setClosed] = useState<Set<string>>(new Set());
+  function closeDetails() { setEditing(null); setDetailDirty(false); }
   async function refresh(query = filter) {
     const [nextProjects,nextTasks,candidates] = await Promise.all([invoke<Project[]>('list_projects'),invoke<Task[]>('list_tasks',{query}),invoke<Task[]>('list_tasks')]);
     setProjects(nextProjects); setTasks(nextTasks); setAllTasks(candidates);
@@ -57,7 +58,7 @@ export function Tasks({ source, onOpenSource }: {
       <div className={`task-row ${editing?.id===task.id ? 'selected' : ''}`} style={{paddingLeft:14+depth*20}}>
         {(children.get(task.id)?.length ?? 0)>0 ? <button className="disclosure" aria-label={`${closed.has(task.id)?'展开':'折叠'} ${task.title}`} aria-expanded={!closed.has(task.id)} onClick={()=>setClosed(previous=>{const next=new Set(previous);if(next.has(task.id))next.delete(task.id);else next.add(task.id);return next;})}>{closed.has(task.id)?'▸':'▾'}</button> : <span className="disclosure-space" />}
         <span className={`task-state ${task.terminal?'terminal':''}`} aria-label={labels[task.status] ?? task.status}>{task.terminal?'✓':'○'}</span>
-        <button className="task-select" aria-label={`编辑 ${task.title}`} aria-pressed={editing?.id===task.id} disabled={busy || editing!==null} onClick={()=>setEditing(task)}>{task.title}</button>
+        <button className="task-select" aria-label={`编辑 ${task.title}`} aria-pressed={editing?.id===task.id} disabled={busy || detailDirty} onClick={()=>setEditing(task)}>{task.title}</button>
         <span className="task-meta">{labels[task.status] ?? task.status}</span>
         <span className="task-tags">{(task.tags ?? []).map(tag=><span key={tag}>#{tag} </span>)}</span>
       </div>
@@ -119,8 +120,8 @@ export function Tasks({ source, onOpenSource }: {
     </div>
     <aside className="task-detail-pane" aria-label="任务详情">
     {editing && <TaskEditor key={editing.id} task={editing} projects={projects} candidates={allTasks} busy={busy} onDirty={setDetailDirty}
-      onCancel={() => setEditing(null)} onSave={(fields,archived) => void run(async () => {
-        await invoke('update_task',{id:editing.id,expectedRowVersion:editing.row_version,fields,archived}); setEditing(null);
+      onCancel={closeDetails} onSave={(fields,archived) => void run(async () => {
+        await invoke('update_task',{id:editing.id,expectedRowVersion:editing.row_version,fields,archived}); closeDetails();
       })} />}
     {!editing && <div className="empty-state"><h2>任务详情</h2><p>选择一个任务，查看项目、标签和父子关系。</p></div>}
     {editing && <div className="detail-actions">
@@ -129,7 +130,7 @@ export function Tasks({ source, onOpenSource }: {
       {task.source_note_id && task.source_revision !== null && <button disabled={busy} onClick={() => onOpenSource(task.source_note_id!,task.source_revision!)}>查看来源版本 {task.source_revision}</button>}
       {!task.archived && task.allowed_targets.map(target => <button key={target} disabled={busy || detailDirty} onClick={() => void run(async () => { await invoke('transition_task', {
         id:task.id, expectedRowVersion:task.row_version, target, reopen:task.terminal,
-      }); setEditing(null); })}>{task.terminal ? '重新打开' : labels[target] ?? target}</button>)}
+      }); closeDetails(); })}>{task.terminal ? '重新打开' : labels[target] ?? target}</button>)}
       </>; })()}
       <p className="sidebar-hint">修改后保存或取消，再选择其他任务。</p>
     </div>}

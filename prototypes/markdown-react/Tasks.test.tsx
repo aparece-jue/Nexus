@@ -6,6 +6,20 @@ vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true, invoke: port.invok
 import { Tasks } from './Tasks';
 afterEach(() => { cleanup(); port.invoke.mockReset(); });
 
+test('clean details allow switching, but an edited draft blocks switching until cancelled', async () => {
+  const base={project_id:null,terminal:false,allowed_targets:['Ready'],status:'Inbox',row_version:1,tags:[],archived:false,source_note_id:null,source_revision:null,parent_id:null};
+  port.invoke.mockImplementation(async command=>command==='list_tasks' ? [{...base,id:'one',title:'First'},{...base,id:'two',title:'Second'}] : []);
+  render(<Tasks source={null} onOpenSource={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button',{name:'编辑 First'}));
+  fireEvent.click(screen.getByRole('button',{name:'编辑 Second'}));
+  expect((screen.getByLabelText('编辑任务标题') as HTMLInputElement).value).toBe('Second');
+  fireEvent.change(screen.getByLabelText('编辑任务标题'),{target:{value:'Second draft'}});
+  expect((screen.getByRole('button',{name:'编辑 First'}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button',{name:'取消编辑'}));
+  // A cancelled editor must not leave the list locked by its previous dirty state.
+  await waitFor(()=>expect((screen.getByRole('button',{name:'编辑 First'}) as HTMLButtonElement).disabled).toBe(false));
+});
+
 test('collapsing a parent hides only its child and preserves the detail draft', async () => {
   const base={project_id:null,terminal:false,allowed_targets:['Ready'],status:'Inbox',row_version:1,tags:['工程'],archived:false,source_note_id:null,source_revision:null};
   port.invoke.mockImplementation(async command=>command==='list_tasks' ? [{...base,id:'p',title:'Parent',parent_id:null},{...base,id:'c',title:'Child',parent_id:'p'}] : []);
