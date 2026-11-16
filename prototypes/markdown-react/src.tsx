@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { isTauri, invoke } from '@tauri-apps/api/core';
 import { createEditor } from '../markdown-editor/editor.mjs';
 import './style.css';
+import { Tasks } from './Tasks';
 
 const SourceEditor = lazy(() => import('./SourceEditor').then(module => ({ default: module.SourceEditor })));
 const MarkdownPreview = lazy(() => import('./MarkdownPreview').then(module => ({ default: module.MarkdownPreview })));
@@ -28,6 +29,13 @@ export function App() {
   const [query, setQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [selectedArchived, setSelectedArchived] = useState(false);
+  const [sourcePreview, setSourcePreview] = useState<{ id: string; revision: number; text: string } | null>(null);
+  async function openSource(id: string, revision: number) {
+    try {
+      const note = await invoke<Note>('read_note', { id, revision });
+      setSourcePreview({ id, revision, text: note.text });
+    } catch (failure) { setError(String(failure)); }
+  }
   async function refreshNotes(archived = showArchived) {
     if (isTauri()) setNotes(await invoke<NoteSummary[]>('list_notes', { archived }));
   }
@@ -78,6 +86,12 @@ export function App() {
   }
   return <main>
     <h1>Nexus · 便签工作区</h1>
+    <Tasks source={!state.dirty && !state.saving && !loading && !selectedArchived && state.id ? { id: state.id, revision: state.revision } : null}
+      onOpenSource={(id, revision) => { void openSource(id, revision); }} />
+    {sourcePreview && <section role="dialog" aria-label="任务来源版本">
+      <h2>来源版本 {sourcePreview.revision}</h2><pre>{sourcePreview.text}</pre>
+      <button onClick={() => setSourcePreview(null)}>关闭来源</button>
+    </section>}
     <p>{isTauri() ? '独立验证工作区：退出后保留，未加密。请勿存入真实工作资料。' : '浏览器组件模式：不保存资料。'}</p>
     <button disabled={!isTauri() || loading || state.dirty || state.saving} onClick={() => void createNote()}>新建便签</button>{' '}
     <button aria-pressed={preview} onClick={() => setPreview(!preview)}>渲染预览</button>{' '}

@@ -145,6 +145,112 @@ async fn save_note(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn create_project(
+    workspace: tauri::State<'_, Arc<Workspace>>,
+    id: String,
+    name: String,
+) -> Result<(), String> {
+    let workspace = workspace.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace
+            .store
+            .lock()
+            .map_err(|_| "存储状态不可用")?
+            .create_project(&id, &name)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn list_projects(
+    workspace: tauri::State<'_, Arc<Workspace>>,
+) -> Result<Vec<nexus_knowledge_store_probe::tasks::Project>, String> {
+    let workspace = workspace.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace
+            .store
+            .lock()
+            .map_err(|_| "存储状态不可用")?
+            .list_projects()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[derive(Deserialize)]
+struct CreateTaskRequest {
+    id: String,
+    title: String,
+    project_id: Option<String>,
+    source_note_id: Option<String>,
+    source_revision: Option<i64>,
+}
+#[tauri::command]
+async fn create_task(
+    workspace: tauri::State<'_, Arc<Workspace>>,
+    request: CreateTaskRequest,
+) -> Result<(), String> {
+    let source = match (&request.source_note_id, request.source_revision) {
+        (Some(id), Some(revision)) => Some((id.clone(), revision)),
+        (None, None) => None,
+        _ => return Err("来源ID和版本必须同时提供".into()),
+    };
+    let workspace = workspace.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace
+            .store
+            .lock()
+            .map_err(|_| "存储状态不可用")?
+            .create_task(
+                &request.id,
+                &request.title,
+                request.project_id.as_deref(),
+                source.as_ref().map(|(id, r)| (id.as_str(), *r)),
+            )
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn list_tasks(
+    workspace: tauri::State<'_, Arc<Workspace>>,
+) -> Result<Vec<nexus_knowledge_store_probe::tasks::Task>, String> {
+    let workspace = workspace.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace
+            .store
+            .lock()
+            .map_err(|_| "存储状态不可用")?
+            .list_tasks()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn transition_task(
+    workspace: tauri::State<'_, Arc<Workspace>>,
+    id: String,
+    expected_row_version: i64,
+    target: String,
+    reopen: bool,
+) -> Result<(), String> {
+    let workspace = workspace.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace
+            .store
+            .lock()
+            .map_err(|_| "存储状态不可用")?
+            .transition_task(&id, expected_row_version, &target, reopen)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -158,7 +264,12 @@ fn main() {
             read_note,
             save_note,
             list_notes,
-            set_note_archived
+            set_note_archived,
+            create_project,
+            list_projects,
+            create_task,
+            list_tasks,
+            transition_task
         ])
         .run(tauri::generate_context!())
         .expect("desktop probe failed");
