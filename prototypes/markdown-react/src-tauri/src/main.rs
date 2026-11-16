@@ -181,6 +181,9 @@ async fn list_projects(
 }
 #[derive(Deserialize)]
 struct CreateTaskRequest {
+    parent_id: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
     id: String,
     title: String,
     project_id: Option<String>,
@@ -208,6 +211,8 @@ async fn create_task(
                 &request.title,
                 request.project_id.as_deref(),
                 source.as_ref().map(|(id, r)| (id.as_str(), *r)),
+                request.parent_id.as_deref(),
+                &request.tags,
             )
             .map_err(|e| e.to_string())
     })
@@ -217,6 +222,7 @@ async fn create_task(
 #[tauri::command]
 async fn list_tasks(
     workspace: tauri::State<'_, Arc<Workspace>>,
+    query: Option<nexus_knowledge_store_probe::tasks::TaskQuery>,
 ) -> Result<Vec<nexus_knowledge_store_probe::tasks::Task>, String> {
     let workspace = workspace.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -224,7 +230,7 @@ async fn list_tasks(
             .store
             .lock()
             .map_err(|_| "存储状态不可用")?
-            .list_tasks()
+            .list_tasks(query.unwrap_or_default())
             .map_err(|e| e.to_string())
     })
     .await
@@ -251,6 +257,27 @@ async fn transition_task(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn update_task(
+    workspace: tauri::State<'_, Arc<Workspace>>,
+    id: String,
+    expected_row_version: i64,
+    fields: nexus_knowledge_store_probe::tasks::TaskFields,
+    archived: bool,
+) -> Result<(), String> {
+    let workspace = workspace.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace
+            .store
+            .lock()
+            .map_err(|_| "存储状态不可用")?
+            .update_task(&id, expected_row_version, &fields, archived)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -269,7 +296,8 @@ fn main() {
             list_projects,
             create_task,
             list_tasks,
-            transition_task
+            transition_task,
+            update_task
         ])
         .run(tauri::generate_context!())
         .expect("desktop probe failed");
