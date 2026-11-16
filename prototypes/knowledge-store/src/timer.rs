@@ -1,7 +1,7 @@
 //! Persistence kernel only. Caller must supply verified clock samples; not an IPC API.
 //! Millisecond precision, paused/recovering exclusion follow Worktrace 7b9cd47 semantics.
 use crate::{Result, Store};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 
 pub(crate) fn ensure_task_not_timed(db: &rusqlite::Connection, task: &str) -> Result<()> {
@@ -24,6 +24,7 @@ PRAGMA user_version=5;";
 
 #[derive(Serialize)]
 pub struct TimerSnapshot {
+    pub open_since_ms: Option<i64>,
     pub id: String,
     pub task_id: String,
     pub state: String,
@@ -33,6 +34,17 @@ pub struct TimerSnapshot {
 }
 
 impl Store {
+    pub fn active_timer(&self) -> Result<Option<TimerSnapshot>> {
+        let id: Option<String> = self
+            .db
+            .query_row(
+                "SELECT id FROM work_session WHERE state<>'finished'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        id.map(|id| self.timer_snapshot(&id)).transpose()
+    }
     /// Release the active slot without turning an unknown interval into confirmed work.
     /// Pending evidence remains queryable; this is not a duration correction.
     pub fn finish_recovery(&mut self, id: &str, expected: i64) -> Result<()> {
@@ -71,6 +83,7 @@ impl Store {
             [id],
             |r| {
                 Ok(TimerSnapshot {
+                    open_since_ms: None,
                     id: r.get(0)?,
                     task_id: r.get(1)?,
                     state: r.get(2)?,
@@ -93,6 +106,9 @@ impl Store {
             if pending {
                 snapshot.pending_intervals += 1;
                 continue;
+            }
+            if end.is_none() {
+                snapshot.open_since_ms = Some(start);
             }
             if let Some(end) = end {
                 let duration = end

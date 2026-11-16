@@ -3,13 +3,30 @@ use nexus_knowledge_store_probe::Store;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
+mod timer_commands;
 
 struct Workspace {
     store: Mutex<Store>,
+    clock: Mutex<timer_commands::TimerClock>,
+    _ownership: Option<std::fs::File>,
 }
 
 fn open_workspace(root: std::path::PathBuf) -> Result<Workspace, String> {
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    let ownership = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join("workspace.lock"))
+        .map_err(|e| e.to_string())?;
+    ownership
+        .try_lock()
+        .map_err(|_| "工作区已在另一个进程中打开".to_string())?;
     let mut store = Store::open(root).map_err(|e| e.to_string())?;
+    store
+        .recover_interrupted_timers()
+        .map_err(|e| e.to_string())?;
     store
         .ensure_note(
             "desktop-note",
@@ -18,6 +35,8 @@ fn open_workspace(root: std::path::PathBuf) -> Result<Workspace, String> {
         .map_err(|e| e.to_string())?;
     Ok(Workspace {
         store: Mutex::new(store),
+        clock: Mutex::new(timer_commands::TimerClock::new()?),
+        _ownership: Some(ownership),
     })
 }
 
@@ -297,7 +316,9 @@ fn main() {
             create_task,
             list_tasks,
             transition_task,
-            update_task
+            update_task,
+            timer_commands::timer_snapshot,
+            timer_commands::timer_action
         ])
         .run(tauri::generate_context!())
         .expect("desktop probe failed");
@@ -306,6 +327,27 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn workspace_ownership_and_startup_recovery_share_the_actual_open_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = open_workspace(dir.path().to_owned()).unwrap();
+        assert!(open_workspace(dir.path().to_owned()).is_err());
+        {
+            let mut store = workspace.store.lock().unwrap();
+            store
+                .create_task("t", "test", None, None, None, &[])
+                .unwrap();
+            store.transition_task("t", 1, "Ready", false).unwrap();
+            store.start_timer("s", "t", 0).unwrap();
+        }
+        drop(workspace);
+        let reopened = open_workspace(dir.path().to_owned()).unwrap();
+        let store = reopened.store.lock().unwrap();
+        let snapshot = store.active_timer().unwrap().unwrap();
+        assert_eq!(snapshot.state, "recovering");
+        assert_eq!(snapshot.pending_intervals, 1);
+        assert_eq!(snapshot.confirmed_ms, 0);
+    }
 
     #[test]
     fn desktop_read_boundary_preserves_current_and_historical_versions() {
@@ -317,6 +359,8 @@ mod tests {
             .unwrap();
         let workspace = Workspace {
             store: Mutex::new(store),
+            clock: Mutex::new(timer_commands::TimerClock::new().unwrap()),
+            _ownership: None,
         };
         assert_eq!(
             read_by_id(&workspace, "desktop-note", None)

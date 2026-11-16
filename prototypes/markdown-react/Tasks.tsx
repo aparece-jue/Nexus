@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { TimerPanel } from './TimerPanel';
 
 type Project = { id: string; name: string; row_version: number };
 type Task = { id: string; title: string; project_id: string | null; status: string; row_version: number;
@@ -119,6 +120,7 @@ export function Tasks({ source, onOpenSource }: {
     {!busy && !visibleTasks.length && <p className="empty-state">没有符合条件的任务。可添加任务，或调整筛选。</p>}
     </div>
     <aside className="task-detail-pane" aria-label="任务详情">
+    <TimerPanel selected={editing} disabled={busy||detailDirty} onChanged={()=>void run(async()=>{})} />
     {editing && <TaskEditor key={editing.id} task={editing} projects={projects} candidates={allTasks} busy={busy} onDirty={setDetailDirty}
       onCancel={closeDetails} onSave={(fields,archived) => void run(async () => {
         await invoke('update_task',{id:editing.id,expectedRowVersion:editing.row_version,fields,archived}); closeDetails();
